@@ -1,4 +1,3 @@
-# <editor-fold desc="Description">
 import hashlib
 import json
 from datetime import datetime
@@ -20,6 +19,10 @@ import sys
 
 DIFFICULTY_COUNT = 3
 portval = 5000
+
+# Create a random name for the receiver
+node_identifier = str(uuid4()).replace('-', '')
+
 sql = """
 CREATE TABLE tb_blockchain(
 id INT NOT NULL PRIMARY KEY,
@@ -37,7 +40,7 @@ class Blockchain(object):
     def __init__(self):
         self.chain = []
         self.currentTransaction = []
-        self.nodes = set()  # 存储区块链网络中所有节点信息
+        self.nodes = set()  # Store all node information in the blockchain network
         # Create the genesis block
         self.blockk = self.new_block(proof=100, previous_hash=1)
         self.neighbor = []
@@ -67,7 +70,7 @@ class Blockchain(object):
 
     def broadcastBC(self):
         myChain = []
-        print("self.chain:"+str(self.chain))
+        # print("self.chain:"+str(self.chain))
         for block in self.chain:
             myChain.append(block)
 
@@ -92,7 +95,6 @@ class Blockchain(object):
         dir["current_hash"] = block['current_hash']
         dir["difficulty"] = block['difficulty']
         dir["proof"] = block['proof']
-        #dir['transactions'] = "".join('%s' % a for a in block['transactions'])
         dir["merkle_root"] = block['merkle_root']
 
         return dir
@@ -101,8 +103,6 @@ class Blockchain(object):
         """
             address: Address of node. 'http://127.0.0.1:5000'
         """
-        # self.post_data(self.blockk)
-        # print("register_node")
         parsed_url = urlparse(address)
         if parsed_url.netloc:
             self.nodes.add(parsed_url.netloc)
@@ -134,32 +134,57 @@ class Blockchain(object):
 
         return True
 
-    # def resolve_conflicts(self):
-    #     """
-    #         replacing our chain with the longest one in the network.
-    #     """
-    #
-    #     neighbours = self.nodes
-    #     new_chain = None
-    #
-    #     max_length = len(self.chain)
-    #
-    #     for node in neighbours:
-    #         response = requests.get(f'http://{node}/chain')
-    #
-    #         if response.status_code == 200:
-    #             length = response.json()['length']
-    #             chain = response.json()['chain']
-    #
-    #             if length > max_length and self.valid_chain(chain):
-    #                 max_length = length
-    #                 new_chain = chain
-    #
-    #     if new_chain:
-    #         self.chain = new_chain
-    #         return True
-    #
-    #     return False
+    def new_transaction(self, sender, recipient, amount):
+
+        gen = ecdsa.NIST256p.generator
+        order = gen.order()
+        # Generate private key d_ A
+        d_A = random.randrange(1, order - 1)
+        # Generate public and private key objects
+        public_key = ecdsa.ecdsa.Public_key(gen, gen * d_A)
+        private_key = ecdsa.ecdsa.Private_key(public_key, d_A)
+        message = sender
+        m = int(hashlib.sha1(message.encode("utf8")).hexdigest(), 16)
+        # Temporary Key
+        k = random.randrange(1, order - 1)
+        signature = private_key.sign(m,k)
+
+        if amount == 6.25:
+            signature = ''
+
+        txsID = hashlib.sha256(str(sender+recipient+str(amount))
+                .encode())\
+                .hexdigest()
+
+        count_others = 0
+        count_sql = """\
+        select count(*) from tb_blockchain_{nodes}
+            """
+        for node in self.nodes:
+            if node != int(portval):
+                with self.conn.cursor() as cursor:
+                    cursor.execute(count_sql.format(nodes=str(node)))
+                    cnt = cursor.fetchone()[0]
+                    self.conn.commit()
+                    count_others += cnt
+
+         # After 51% attack, double spending happened
+        if len(self.chain) > count_others:
+            print("double spending happens!")
+
+
+        self.currentTransaction.append({
+            'transactionID': txsID,
+            'transactionInput':signature,
+            'transactionOutput':{
+                'recipient':recipient,
+                'amount':amount
+            }
+        })
+
+        if len(self.chain) == 0:
+            return 1
+        return self.last_block['id'] + 1
 
 
     def new_block(self, proof, previous_hash=None):
@@ -174,7 +199,14 @@ class Blockchain(object):
         merkle = t
 
         if int(portval) != 5000:
-            time.sleep(2)
+            time.sleep(3)
+
+        if len(self.currentTransaction) == 0:
+            self.new_transaction(
+                sender="0",
+                recipient="rrrrrr",
+                amount=6.25
+            )
 
         block = {
             'id': (len(self.chain) + 1),
@@ -182,7 +214,7 @@ class Blockchain(object):
             'timestamp': time.time(),
             'previous_hash': str(previous_hash or self.hash(self.chain[-1])),
             'current_hash': str(crt_hash),
-            'difficulty': 5,
+            'difficulty': 4,
             'proof': proof,
             'merkle_root':merkle
         }
@@ -194,73 +226,6 @@ class Blockchain(object):
         return block
 
 
-    def new_transaction(self, sender, recipient, amount):
-
-        gen = ecdsa.NIST256p.generator
-        order = gen.order()
-        # 生成私钥d_A
-        d_A = random.randrange(1, order - 1)
-        # 生成公私钥对象
-        public_key = ecdsa.ecdsa.Public_key(gen, gen * d_A)
-        private_key = ecdsa.ecdsa.Private_key(public_key, d_A)
-        message = sender
-        m = int(hashlib.sha1(sender.encode("utf8")).hexdigest(), 16)
-        # 临时密钥
-        k = random.randrange(1, order - 1)
-        # 签名
-        # signature = private_key.sign(m, k)
-        # private_key = ec.generate_private_key(ec.SECP384R1())
-        # # print("private_key:"+str(private_key))
-        # public_key = private_key.public_key()
-        # # print("public_key:" + str(public_key))
-        # message = sender.encode('utf-8')
-        signature = private_key.sign(m,k)
-        print("signature:"+str(signature))
-
-        ver_res = verify(public_key, signature, message)
-        if(ver_res == False):
-            return Exception("Failed to add transaction.")
-
-
-        txsID = hashlib.sha256(str(sender+recipient+amount).encode()).hexdigest()
-
-        # self.currentTransaction.append(pbkeyaddr)
-        print("txsID:"+str(txsID))
-
-        # self.currentTransaction.append({
-        #     'sender': sender,
-        #     'recipient': recipient,
-        #     'amount': amount,
-        # })
-
-        count_others = 0
-        count_sql = """\
-        select count(*) from tb_blockchain_{nodes}
-            """
-        for node in self.nodes:
-            if node != int(portval):
-                with self.conn.cursor() as cursor:
-                    cursor.execute(count_sql.format(nodes=str(node)))
-                    cnt = cursor.fetchone()[0]
-                    self.conn.commit()
-                    print("cnt:" + str(cnt))
-                    count_others += cnt
-
-
-        if len(self.chain) > count_others:
-            amount *= 2
-
-        self.currentTransaction.append({
-            'transactionID': txsID,
-            'transactionInput':signature,
-            'transactionOutput':{
-                'recipient':recipient,
-                'amount':amount
-            }
-        })
-
-        print("self.currentTransaction:"+str(self.currentTransaction))
-        return self.last_block['id'] + 1
 
 
     @staticmethod
@@ -295,7 +260,7 @@ class Blockchain(object):
         # if this round time > twice last round time, reduce difficulty
         if (this_round_time > last_round_time*2):
             return block['difficulty'] - 1
-        # if this round tiem < half last round time, increase difficulty
+        # if this round time < half last round time, increase difficulty
         if (this_round_time < last_round_time/2):
             return block['difficulty'] + 1
         return block['difficulty']
@@ -303,9 +268,6 @@ class Blockchain(object):
     # Query data
     def get_data(self, number):
 
-        # self.conn = pymysql.connect(host='localhost', port=3306,
-        #                             user='root', password='123456',
-        #                             database='mysql', charset='utf8')
         with self.conn.cursor() as cursor:
             try:
                 # Perform MySQL query operations
@@ -348,7 +310,6 @@ class Blockchain(object):
 
                 # A successful insert requires a commit to synchronize in the database
                 if isinstance(res_info, int):
-                    print('数据更新成功')
                     self.conn.commit()
             # finally:
             #     # After the operation is complete, you need to close the connection
@@ -374,23 +335,14 @@ class Blockchain(object):
         self.r.set('stream2', str(fullnode))
         self.r.set('stream3', str(utxolist))
 
-    # def pull_and_store_stream(self):
-    #     # Check if the blockchain is full
-    #     # for data in self.stream_from():
-    #     self.ingest_to_db_stream(len(self.chain), self.nodes, self.neighbor)
 
 app = Flask(__name__)
-
-# 为节点创建一个随机名称
-node_identifier = str(uuid4()).replace('-', '')
 
 blockchain = Blockchain()
 
 blockchain.connect_to_db()
 
 blockchain.ingest_to_db_stream(len(blockchain.chain),blockchain.nodes, blockchain.currentTransaction)
-
-
 
 
 valueslist = []
@@ -402,22 +354,25 @@ def strtoJson(tx:str)->dict:
         'recipient':temp[1].split('=')[1],
         'amount':temp[2].split('=')[1]
     }
-# 发送数据
+
 @app.route('/transactions/new', methods=['POST'])
 def new_transaction():
 
     values = request.get_json()
-    valueslist = strtoJson(values)
+    if type(values) != dict:
+        valueslist = strtoJson(values)
+    else:
+        valueslist = values
 
     required = ['sender', 'recipient', 'amount']
     if not all(k in valueslist for k in required):
-        return 'Missing values', 400  # 400 请求错误
+        return 'Missing values', 400
 
     id = blockchain.new_transaction(valueslist['sender'], valueslist['recipient'], valueslist['amount'])
-    # print(valueslist['recipient'])
-    print("valueslist:"+str(valueslist))
+
+    # print("valueslist:"+str(valueslist))
     response = {'message': f'Transaction will be added to Block {id}'}
-    # print(id)
+
     return jsonify(response), 201
 
 def sign(sk, message):
@@ -427,13 +382,12 @@ def sign(sk, message):
 def verify(pk, signature, message):
     # verify the signature using public key
     try:
-        pk.verify(signature, message, ec.ECDSA(hashes.SHA256()))
+        verify(signature, message, ec.ECDSA(hashes.SHA256()))
     except:  # occur some error
         return "false"
     else:  # no error
         return "true"
 
-# 创建 /mine 端点，GET
 @app.route('/mine', methods=['GET'])
 def mine():
 
@@ -442,31 +396,32 @@ def mine():
         last_block = blockchain.last_block
         last_proof = last_block['proof']
         last_difficulty = blockchain.change_difficulty(last_block)
-        proof = blockchain.proof_of_work(last_proof, last_difficulty)
-
-        # blockchain.new_transaction(
-        #     sender="0",
-        #     recipient=node_identifier,
-        #     amount=1,
-        # )
+        proof = last_proof + 1
 
         previous_hash = blockchain.hash(last_block)
         block = blockchain.new_block(proof, previous_hash)
         block['difficulty'] = last_difficulty
-        # block['transactions'] = str(blockchain.currentTransaction)
-        # print("blockchain.currentTransaction:"+str(blockchain.currentTransaction))
-        #current_hash = blockchain.hash(block)
-        len0 = len(block['current_hash']) - len(block['current_hash'].lstrip('0'))
-        block['current_hash'] = '0' * (block['difficulty']-len0) + block['current_hash']
+
+        diff = block['difficulty']
+        hash1 = block['current_hash']
+        while True:
+            hash2 = hashlib.sha256((str(proof) + str(hash1)).encode('utf-8')).hexdigest()
+            zerobits = ['0'] * diff
+            if (hash2[:diff] == ''.join(zerobits)):
+                break
+            proof += 1
+        block['current_hash'] = hash2
+        block['proof'] = proof
 
         blockchain.post_data(block)
 
         blockchain.ingest_to_db_stream(len(blockchain.chain), blockchain.nodes, blockchain.currentTransaction)
 
         count += 1
-        if count == 50:
+        if count == 200:
             blockchain.broadcastBC()
             count = 0
+
 
         blockdict = {
             'id': block['id'],
@@ -478,33 +433,14 @@ def mine():
             'difficulty': block['difficulty'],
             'merkle_root': block['merkle_root']
         }
-        print(blockdict)
+        # print(blockdict)
+
         response = {
             'message': "New Block Forged",
             'block':blockdict,
         }
 
     return jsonify(response), 200
-
-# @app.route("/addneighbor",methods=['POST'])
-# def addNeighbor():
-#
-#     node=request.values.get("node")
-#     print(node)
-#     if node==None:
-#         return "can not add",400
-#     if node not in blockchain.neighbor:
-#         blockchain.addNeighbor(node)
-#         response={
-#         "message":"successful",
-#     }
-#     else:
-#         response={
-#             "message":"already added"
-#         }
-#     for neighbor in blockchain.neighbor:
-#         print(neighbor)
-#     return jsonify(response),200
 
 
 def blocktoJson(block):
@@ -523,7 +459,8 @@ def blocktoJson(block):
 @app.route("/getblocks",methods=['GET'])
 def getBlocks():
     blocks=blockchain.chain
-    blockchain.get_data(1)
+
+    # blockchain.get_data(1)
 
     chain=[]
     for block in blocks:
@@ -537,15 +474,9 @@ def getBlocks():
 
 
 def handleBC(blocks: str):
-    blockchain = []
-    print("blocks:"+str(blocks))
-    # for temp in blocks.split('}')[:-1]:
-    #     r1 = re.search("\'[\\w]+\':[\']*.+[\']*", temp)
-    #     result = str(r1.group())
-    #     result = '{' + result + '}'
-    #     result_dir = eval(result)
-    #     # TODO
-    #     print("resultdir-tx"+str(result_dir['transactions']))
+    block_chain = []
+    # print("blocks:"+str(blocks))
+
 
     block_list = ast.literal_eval(blocks)
     for block in block_list:
@@ -564,38 +495,33 @@ def handleBC(blocks: str):
         print("handleBC:"+str(newBlock))
         blockchain.append(newBlock)
 
-    return blockchain
+    return block_chain
 
-    #TODO 处理tx字符串
 def handleTX(tx:str)->list:
-    print("tx:"+str(tx))
     txlist=[]
     if len(tx) > 2:
         tx_list = ast.literal_eval(tx)
         for temp in tx_list:
             tx_dict = eval(str(temp))
             txlist.append(str(tx_dict))
-    print(txlist)
     return txlist
 
 
 @app.route("/broadcast", methods=['POST'])
 def broadcast():
-    # print("broadcast")
     length = request.form.get("length")
     blocks = request.form.get("blocks")
 
     if blocks == None:
         return "no blocks", 400
 
-    # print("blocks:"+blocks)
 
     if int(length) >= len(blockchain.chain):
         # blockchain.valid_chain(blockchain.chain)
-        print("broadcast-handleBC")
+        # print("broadcast-handleBC")
         blockchain.chain = handleBC(blocks)
 
-    print(blockchain.chain)
+    # print(blockchain.chain)
 
     response = {
         'message': 'get the broadcast'
@@ -605,15 +531,10 @@ def broadcast():
 @app.route('/nodes/register', methods=['POST'])
 def register_nodes():
     values = request.get_json()
-    # valueslist = strtoJson(values)
-    # print(valueslist)
 
     nodes = values.split('=')[1]
     if nodes not in blockchain.nodes:
         blockchain.nodes.add(nodes)
-
-    print(nodes)
-    print(blockchain.nodes)
 
     if nodes is None:
         return "Error: Please supply a valid list of nodes", 400
@@ -632,28 +553,8 @@ def register_nodes():
     }
     return jsonify(response), 201
 
-
-# @app.route('/nodes/resolve', methods=['GET'])
-# def consensus():
-#     replaced = blockchain.resolve_conflicts()
-#
-#     if replaced:
-#         response = {
-#             'message': 'Our chain was replaced',
-#             'new_chain': blockchain.chain
-#         }
-#     else:
-#         response = {
-#             'message': 'Our chain is authoritative',
-#             'chain': blockchain.chain
-#         }
-#
-#     return jsonify(response), 200
-
-
-# 创建 /chain 端点，返回整个Blockchain类
+# return Blockchain
 @app.route('/chain', methods=['GET'])
-# 将返回本节点存储的区块链条的完整信息和长度信息。
 def full_chain():
     response = {
         'chain': blockchain.chain,
@@ -661,15 +562,9 @@ def full_chain():
     }
     return jsonify(response), 200
 
-
-
-# 服务器运行端口 5000
 if __name__ == '__main__':
-    # print('please input the number of node:')
+
     portval = input('Please input the number of node:')
     app.run(host='127.0.0.1', port=int(portval))
     app.wsgi_app = ProxyFix(app.wsgi_app)
     app.run()
-
-
-# </editor-fold>
