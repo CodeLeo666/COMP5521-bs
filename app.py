@@ -82,9 +82,9 @@ class Blockchain(object):
             if node != int(portval):
                 response = requests.post(f'http://127.0.0.1:{node}/broadcast', data=data)
                 if response.status_code == 200:
-                    print('广播成功')
+                    print('Broadcasting succeeded!')
                 else:
-                    print('广播失败')
+                    print('Broadcast failed!')
 
     def blocktoJson(block):
         dir = {}
